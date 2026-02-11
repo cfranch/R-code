@@ -1,0 +1,134 @@
+# =========================================
+# Practice effects as a dynamic biomarker of early cognitive change in far-from-onset Huntington’s Disease
+# =========================================
+# R version 4.4.3
+# Required packages: dplyr, purrr, gtsummary, effectsize, lmerTest, segmented, gt
+# =========================================
+
+# Load required packages
+library(dplyr)
+library(purrr)
+library(gtsummary)
+library(effectsize)
+library(lmerTest)
+library(segmented)
+library(gt)
+
+# =========================================
+# 1. Data Preparation and Matching
+
+# Separate healthy controls and HGEC participants
+controls_df <- base_data %>%
+  filter(hdcat == "Healthy Controls")
+
+hgec_df <- base_data %>%
+  filter(hdcat == "HGEC")
+
+# Nearest neighbor matching: match each HGEC with the closest control by age
+matched_controls_df <- map_dfr(hgec_df$subjid, function(hgec_id) {
+  hgec_row <- hgec_df %>% filter(subjid == hgec_id)
+  
+  control_row <- controls_df %>%
+    mutate(age_diff = abs(Age - hgec_row$Age)) %>%
+    arrange(age_diff) %>%
+    slice(1)
+  
+  # Remove control already matched
+  controls_df <<- controls_df %>% filter(subjid != control_row$subjid)
+  
+  return(control_row)
+})
+
+# Combine HGEC with matched controls
+matched_df <- bind_rows(hgec_df, matched_controls_df)
+
+# =========================================
+# 2. Descriptive Statistics
+
+continuous_vars <- c("Age", "CAG", "CAP_score", "TFC", "UHDRS_TMS", "MMSE",
+                     "SDMT", "SCNT", "SWRT", "SCWT", "Semantic_Fluency", 
+                     "FAS", "TMT_A", "TMT_B")
+
+categorical_vars <- c("ISCED", "Sex")
+
+# Summary table
+table1 <- tbl_summary(
+  matched_df,
+  by = hdcat,
+  include = c(continuous_vars, categorical_vars),
+  type = list(`ISCED` ~ "categorical"),
+  statistic = list(all_continuous() ~ "{mean} ({sd})"),
+  missing = "no"
+) %>%
+  add_p(test = all_continuous() ~ "aov",
+        pvalue_fun = label_style_pvalue(digits = 3)) %>%
+  add_q(method = "bonferroni") %>%
+  bold_labels()
+
+# Cohen's d for continuous variables
+cohens_d_df <- purrr::map_dfr(continuous_vars, function(var) {
+  formula <- as.formula(paste0("`", var, "` ~ hdcat"))
+  res <- effectsize::cohens_d(formula, data = matched_df)
+  tibble(variable = var, cohens_d = round(res$Cohens_d, 3))
+})
+
+# Add Cohen's d to table
+table1 <- table1 %>%
+  modify_table_body(~ left_join(.x, cohens_d_df, by = "variable")) %>%
+  modify_header(cohens_d = "**Cohen's d**")
+
+# Save table
+table1 %>% as_gt() %>% gt::gtsave("table1.docx")
+
+# =========================================
+# 3. Linear Mixed-Effects Models
+
+cognitive_tests <- c("SDMT", "SCNT", "SWRT", "SCWT")
+
+fit_lme_model <- function(outcome_var, dataset) {
+  formula <- as.formula(paste0(outcome_var, " ~ Age + ISCED + Sex + time*hdcat + (1 | subjid)"))
+  lmer(formula, data = dataset)
+}
+
+lme_models <- purrr::map(cognitive_tests, fit_lme_model, dataset = longitudinal_df)
+
+# =========================================
+# 4. Segmented Linear Regression (CAP score breakpoint)
+
+fit_segmented_model <- function(outcome_var, dataset) {
+  lm_model <- lm(as.formula(paste0(outcome_var, " ~ time*CAP_score")), data = dataset)
+  seg_model <- segmented(lm_model, seg.Z = ~CAP_score, npsi = 1)
+  list(lm_model = lm_model, segmented_model = seg_model)
+}
+
+segmented_models <- purrr::map(cognitive_tests, fit_segmented_model, dataset = segmented_df)
+
+segmented_results <- purrr::map(segmented_models, function(mod) {
+  tibble(
+    breakpoint = mod$segmented_model$psi[2],
+    conf_low = confint(mod$segmented_model)[2, 1],
+    conf_high = confint(mod$segmented_model)[2, 2]
+  )
+})
+
+# =========================================
+# 5. CAP Score Quartiles and LME
+
+quartile_df <- base_quartiles %>%
+  mutate(CAP_quartile = cut(CAP_score,
+                            breaks = quantile(CAP_score, probs = seq(0, 1, 0.25), na.rm = TRUE),
+                            labels = c("Q1", "Q2", "Q3", "Q4"),
+                            include.lowest = TRUE))
+
+quartile_long_df <- longitudinal_df %>%
+  filter(hdcat != "Healthy Controls") %>%
+  left_join(quartile_df %>% select(subjid, CAP_quartile), by = "subjid")
+
+fit_lme_quartile <- function(outcome_var, dataset) {
+  lmer(as.formula(paste0(outcome_var, " ~ Age + ISCED + Sex + time*CAP_quartile + (1 | subjid)")), 
+       data = dataset)
+}
+
+lme_quartile_models <- purrr::map(cognitive_tests, fit_lme_quartile, dataset = quartile_long_df)
+
+
