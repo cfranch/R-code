@@ -62,7 +62,6 @@ table1 <- tbl_summary(
 ) %>%
   add_p(test = all_continuous() ~ "aov",
         pvalue_fun = label_style_pvalue(digits = 3)) %>%
-  add_q(method = "bonferroni") %>%
   bold_labels()
 
 # Cohen's d for continuous variables
@@ -91,6 +90,18 @@ fit_lme_model <- function(outcome_var, dataset) {
 }
 
 lme_models <- purrr::map(cognitive_tests, fit_lme_model, dataset = longitudinal_df)
+
+extract_p <- function(model) {
+  broom.mixed::tidy(model) |>
+    dplyr::filter(term == "time:hdcat") |>
+    dplyr::select(estimate, std.error, statistic, p.value)
+}
+
+lme_results <- purrr::map_dfr(lme_models, extract_p, .id = "test")
+
+#Apply FDR correction (Benjamini-Hochberg)
+lme_results$p_fdr <- p.adjust(lme_results$p.value, method = "fdr")
+
 
 # =========================================
 # 4. Segmented Linear Regression (CAP score breakpoint)
