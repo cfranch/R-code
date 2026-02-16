@@ -82,7 +82,7 @@ table1 %>% as_gt() %>% gt::gtsave("table1.docx")
 # =========================================
 # 3. Linear Mixed-Effects Models
 
-cognitive_tests <- c("SDMT", "SCNT", "SWRT", "SCWT")
+cognitive_tests <- c("SDMT", "SCNT", "SWRT", "SCWT", "Semantic_Fluency", "FAS", "TMT_A", "TMT_B")
 
 fit_lme_model <- function(outcome_var, dataset) {
   formula <- as.formula(paste0(outcome_var, " ~ Age + ISCED + Sex + time*hdcat + (1 | subjid)"))
