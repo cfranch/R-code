@@ -106,13 +106,15 @@ lme_results$p_fdr <- p.adjust(lme_results$p.value, method = "fdr")
 # =========================================
 # 4. Segmented Linear Regression (CAP score breakpoint)
 
+cognitive_tests_lme <- c("SDMT", "SCNT", "SWRT", "SCWT")
+
 fit_segmented_model <- function(outcome_var, dataset) {
   lm_model <- lm(as.formula(paste0(outcome_var, " ~ time*CAP_score")), data = dataset)
   seg_model <- segmented(lm_model, seg.Z = ~CAP_score, npsi = 1)
   list(lm_model = lm_model, segmented_model = seg_model)
 }
 
-segmented_models <- purrr::map(cognitive_tests, fit_segmented_model, dataset = segmented_df)
+segmented_models <- purrr::map(cognitive_tests_lme, fit_segmented_model, dataset = segmented_df)
 
 segmented_results <- purrr::map(segmented_models, function(mod) {
   tibble(
@@ -140,6 +142,6 @@ fit_lme_quartile <- function(outcome_var, dataset) {
        data = dataset)
 }
 
-lme_quartile_models <- purrr::map(cognitive_tests, fit_lme_quartile, dataset = quartile_long_df)
+lme_quartile_models <- purrr::map(cognitive_tests_lme, fit_lme_quartile, dataset = quartile_long_df)
 
 
